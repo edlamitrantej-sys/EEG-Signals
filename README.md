@@ -9,7 +9,7 @@
 <h1 align="center">🧠 NeuroScan — Epileptic Seizure Detection System</h1>
 
 <p align="center">
-  <b>A real-time, AI-powered EEG analysis platform for epileptic seizure detection using a hybrid CNN-Transformer architecture with Continuous Wavelet Transform (CWT) feature engineering.</b>
+  <b>A real-time, AI-powered EEG analysis platform for epileptic seizure detection using a hybrid CNN-Transformer architecture with Continuous Wavelet Transform (CWT) feature engineering </b>
 </p>
 
 <p align="center">
