@@ -46,78 +46,89 @@ NeuroScan is an end-to-end clinical-grade EEG analysis system that classifies br
 
 ## 🏗 Architecture
 
-### High-Level System Architecture
+I rewrote and structured the architecture section to make component boundaries, responsibilities, and interfaces explicit so the system design is easier to understand and implement.
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        NeuroScan System Architecture                        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│   ┌──────────┐    ┌──────────────┐    ┌──────────────┐    ┌─────────────┐  │
-│   │  STAGE 1  │───▶│   STAGE 2     │───▶│   STAGE 3     │───▶│   STAGE 4   │  │
-│   │  Data     │    │  Feature      │    │  AI Model     │    │  Clinical   │  │
-│   │  Ingestion│    │  Engineering  │    │  Inference    │    │  Output     │  │
-│   └──────────┘    └──────────────┘    └──────────────┘    └─────────────┘  │
-│                                                                             │
-│   ┌──────────┐    ┌──────────────┐    ┌──────────────┐    ┌─────────────┐  │
-│   │ • EDF     │    │ • Complex     │    │ • 2D CNN      │    │ • Dashboard │  │
-│   │ • CSV/TXT │    │   Morlet CWT  │    │   (spatial)   │    │ • Scalograms│  │
-│   │ • JSON    │    │ • 22ch × 50f  │    │ • Transformer │    │ • Reports   │  │
-│   │ • Demo    │    │   × 512t      │    │   (temporal)  │    │ • Confidence│  │
-│   │           │    │ • Scalogram   │    │ • 4-class     │    │   Scores    │  │
-│   │ Notch 60Hz│    │   rendering   │    │   softmax     │    │ • Auth      │  │
-│   │ BP 0.5-50 │    │               │    │               │    │             │  │
-│   │ Z-Score   │    │               │    │               │    │             │  │
-│   └──────────┘    └──────────────┘    └──────────────┘    └─────────────┘  │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+### Architecture summary (single paragraph)
+NeuroScan is split into four logical layers: Ingestion & Preprocessing, Feature Engineering (CWT), AI Inference (CNN-Transformer), and Clinical Output (API + Dashboard). Components communicate over clearly defined REST endpoints and internal data contracts (numpy arrays, base64 images, and JSON). The system is designed to run on a single machine for demo and small deployments and to scale horizontally in production via stateless API workers behind a load balancer and a shared model-serving or object-storage layer for artifacts.
 
-### Data Flow
+### Components and responsibilities
+- Ingestion Service (Flask API - code/app.py)
+  - Accepts: multipart file uploads (.edf/.csv/.txt) or JSON realtime streams.
+  - Authenticates clinicians using Practice ID + Access Key.
+  - Responsibilities: basic validation, saving raw input to a temporary store, and returning a request ID.
+  - API: POST /api/predict (see API Reference for formats).
 
-```
-                    ┌─────────────────────────────────┐
-                    │      Clinician / Researcher      │
-                    └────────────┬──────────────────────┘
-                                 │ Login (Practice ID + Key)
-                                 ▼
-                    ┌─────────────────────────────────┐
-                    │     POST /api/auth               │
-                    │     → Session Token (8hr)        │
-                    └────────────┬──────────────────────┘
-                                 │
-              ┌──────────────────┼──────────────────────┐
-              │                  │                      │
-              ▼                  ▼                      ▼
-     ┌────────────────┐ ┌────────────────┐  ┌───────────────────┐
-     │  Demo Signal   │ │  File Upload   │  │   JSON API Call   │
-     │  (4 types)     │ │  (.edf/.csv)   │  │   (signal_data)   │
-     └───────┬────────┘ └───────┬────────┘  └────────┬──────────┘
-              │                  │                     │
-              └──────────────────┼─────────────────────┘
-                                 │
-                                 ▼
-              ┌──────────────────────────────────────────┐
-              │         POST /api/predict                 │
-              │                                          │
-              │  Stage 1: Notch → Bandpass → Z-Score     │
-              │  Stage 2: CWT Scalogram (22×50×512)      │
-              │  Stage 3: CNN-Transformer → Softmax      │
-              │  Stage 4: Generate Report + Scalograms   │
-              │                                          │
-              └──────────────────┬───────────────────────┘
-                                 │
-                                 ▼
-              ┌──────────────────────────────────────────┐
-              │            JSON Response                  │
-              │  • prediction: "Seizure (Ictal)"         │
-              │  • confidences: {Normal: 0.01, ...}      │
-              │  • scalogram: base64 PNG (ch FP1-F7)     │
-              │  • scalogram_2: base64 PNG (ch C3-P3)    │
-              │  • medical_notes: "NEUROSCAN REPORT..."  │
-              │  • elapsed_ms: 142                       │
-              └──────────────────────────────────────────┘
-```
+- Preprocessing Pipeline (preprocess_* modules)
+  - Responsibilities: Notch filtering, bandpass (0.5–50 Hz), epoch extraction, artifact rejection (>300µV), and channel normalization (Z-score per channel).
+  - Input/Output: receives raw samples (22 × N), outputs fixed-length epochs (22 × 512 float32 numpy arrays).
+
+- Feature Engineering (preprocess_features.py)
+  - Responsibilities: compute CWT per channel using a complex Morlet wavelet, produce scalogram tensors.
+  - Output: (22 × 50 × 512) float32 tensor. Also produces PNG scalogram previews (base64) for visualization.
+
+- Model Serving (model.py + backend_model_completed.pt)
+  - Core: 2D CNN for spatial features + Transformer encoder for temporal modeling.
+  - Responsibilities: load model weights (support FP32/FP16), accept the scalogram tensor, return class probabilities and embeddings.
+  - Interface: accepts numpy/pytorch tensor, returns JSON: {prediction, confidences, embedding (optional)}.
+
+- Postprocessing & Reporting
+  - Responsibilities: convert model outputs into clinical notes, render base64 scalograms, prepare UI payloads, and compute latency metrics.
+
+- Dashboard / Frontend (neuroscan_dashboard.html)
+  - Responsibilities: render scalograms, timeline, classification, and controls for demo signals; interacts with API endpoints.
+
+- Storage & Artifacts
+  - Short-term: ephemeral disk or memory cache for uploaded raw files and generated scalograms.
+  - Long-term: optional object storage (S3 / GCS) for audit logs, model checkpoints, and anonymized records.
+
+### Data flow & interface contracts
+1. Client -> POST /api/auth: returns session token (8hr).
+2. Client -> POST /api/predict
+   - JSON body: {"signal_data": [[...], "patient_id": "..."]}
+   - or multipart/form-data with file field for EDF/CSV/TXT.
+3. Server: returns 202 with request_id for long-running jobs or 200 with sync response for quick inferences.
+4. Predict response (sync):
+   {
+     "prediction": "Seizure (Ictal)",
+     "confidences": {"Normal":0.01, "Preictal":0.02, "Seizure (Ictal)":0.95, "Postictal":0.02},
+     "scalogram_ch_fp1_f7": "data:image/png;base64,...",
+     "elapsed_ms": 142
+   }
+
+Internal types to respect:
+- Raw signal: List[List[float]] or numpy array of shape (22, N)
+- Epochs: numpy.float32 of shape (22, 512)
+- Scalogram tensor: numpy.float32 of shape (22, 50, 512)
+- Images: base64-encoded PNG for UI
+
+### Simplified sequence (core inference)
+
+Client -> API (auth token) -> Preprocessor -> CWT -> Model -> Postprocessor -> Client (JSON + scalogram images)
+
+### Deployment and scalability notes
+- Demo / local mode
+  - Single Flask process, local model file load, suitable for testing and demos.
+- Production mode
+  - Serve Flask behind Gunicorn with multiple worker processes.
+  - Use a model-server (TorchServe or a lightweight PyTorch endpoint) or keep model in memory across workers (careful with memory).
+  - Offload scalogram image storage to object storage and return URLs instead of base64 for large-scale use.
+  - Add a Redis queue (RQ/Celery) for asynchronous, long-running preprocessing jobs and retries.
+  - Use autoscaling for API workers behind a load balancer; keep the model artifact in a shared, versioned object store.
+
+### Security & privacy
+- Authentication:
+  - Practice ID + Access Key for demo; replace with OAuth2 / SSO for production.
+- Data protection:
+  - Transmit over TLS only.
+  - Encrypt or anonymize patient identifiers before long-term storage.
+- Auditing:
+  - Log request IDs, clinician ID, model version, and timestamps for traceability.
+
+### Observability
+- Metrics to export (Prometheus/Grafana)
+  - Inference latency (ms), requests/sec, error rates, queue lengths, GPU memory usage.
+- Logs
+  - Structured JSON logs with request_id, clinician_id, model_version, elapsed_ms.
 
 ---
 
@@ -142,11 +153,11 @@ Raw EEG Signal (22 channels × N samples)
 ┌──────────────────────────────────┐
 │  Epoch Extraction (2s windows)   │  ← 512 samples @ 256Hz, 50% overlap
 │  + Artifact Rejection (>300µV)   │  ← Discards noisy/saturated segments
-└──────────┬───────────────────────┘
+└──────────┬──────────────────────┘
            ▼
 ┌──────────────────────────────────┐
 │  Z-Score Normalization           │  ← Mean=0, Std=1 per channel
-└──────────┬───────────────────────┘
+└──────────┬──────────────────────┘
            ▼
    Clean Signal: (22 × 512)
 ```
