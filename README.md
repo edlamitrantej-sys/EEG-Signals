@@ -13,12 +13,13 @@
 </p>
 
 <p align="center">
-  <a href="#-architecture">Architecture</a> •
+  <a href="#-overview">Overview</a> •
+  <a href="#-high-level-architecture">Architecture</a> •
   <a href="#-pipeline-stages">Pipeline</a> •
   <a href="#-model-architecture">Model</a> •
   <a href="#-quick-start">Quick Start</a> •
-  <a href="#-demo">Demo</a> •
-  <a href="#-results">Results</a>
+  <a href="#-api-reference">API</a> •
+  <a href="#-dataset">Dataset</a>
 </p>
 
 ---
@@ -38,85 +39,88 @@ NeuroScan is an end-to-end clinical-grade EEG analysis system that classifies br
 - 🔬 Real CNN-Transformer hybrid model trained on **CHB-MIT Scalp EEG Database**
 - 🌊 Continuous Wavelet Transform (CWT) scalogram visualization
 - 📋 Auto-generated clinical reports with confidence scoring
-- 🔐 Session-based clinician authentication
+- 🔐 Session-based clinician authentication (8-hour tokens)
 - 📁 Supports `.edf` (medical), `.csv`, and `.txt` EEG file formats
 - 🎮 Built-in demo mode with synthetic signals for all 4 seizure states
 
 ---
 
-## 🏗 Architecture
+## 🏗 High-Level Architecture
 
-### High-Level System Architecture
+```mermaid
+flowchart TD
+    subgraph INPUT["📥  INPUT SOURCES"]
+        A1["🗂️ EDF File\n(.edf medical format)"]
+        A2["📄 CSV / TXT File"]
+        A3["🔴 Live Demo Signal\n(Normal / Preictal / Seizure / Postictal)"]
+        A4["📡 JSON API Call"]
+    end
 
+    subgraph S1["⚙️  STAGE 1 — Signal Preprocessing"]
+        B1["Notch Filter\n60 Hz removal"]
+        B2["Bandpass Filter\n0.5 – 50 Hz"]
+        B3["Epoch Extraction\n2s windows @ 256 Hz"]
+        B4["Artifact Rejection\n> 300 µV discarded"]
+        B5["Z-Score Normalization\nper channel"]
+    end
+
+    subgraph S2["🌊  STAGE 2 — CWT Feature Engineering"]
+        C1["Complex Morlet Wavelet\ncmor1.5-1.0"]
+        C2["Scalogram Generation\n22 ch × 50 freq × 512 time"]
+        C3["PNG Heatmaps\n(base64, for dashboard)"]
+    end
+
+    subgraph S3["🤖  STAGE 3 — CNN-Transformer Model"]
+        D1["2D CNN Blocks\nSpatial Feature Extraction"]
+        D2["Reshape Bridge\n→ Sequence of 128 time steps"]
+        D3["Transformer Encoder\n2 layers · 8 heads · d=768"]
+        D4["Classifier Head\nSoftmax → 4 classes"]
+    end
+
+    subgraph S4["📋  STAGE 4 — Clinical Output"]
+        E1["Prediction Label\n+ Confidence Scores"]
+        E2["Medical Report\nAuto-generated notes"]
+        E3["Clinical Dashboard\nLive waveform · Scalograms"]
+    end
+
+    A1 & A2 & A3 & A4 --> B1
+    B1 --> B2 --> B3 --> B4 --> B5
+    B5 --> C1 --> C2 --> C3
+    C2 --> D1 --> D2 --> D3 --> D4
+    D4 --> E1
+    C3 --> E3
+    E1 --> E2 --> E3
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        NeuroScan System Architecture                        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│   ┌──────────┐    ┌──────────────┐    ┌──────────────┐    ┌─────────────┐  │
-│   │  STAGE 1  │───▶│   STAGE 2     │───▶│   STAGE 3     │───▶│   STAGE 4   │  │
-│   │  Data     │    │  Feature      │    │  AI Model     │    │  Clinical   │  │
-│   │  Ingestion│    │  Engineering  │    │  Inference    │    │  Output     │  │
-│   └──────────┘    └──────────────┘    └──────────────┘    └─────────────┘  │
-│                                                                             │
-│   ┌──────────┐    ┌──────────────┐    ┌──────────────┐    ┌─────────────┐  │
-│   │ • EDF     │    │ • Complex     │    │ • 2D CNN      │    │ • Dashboard │  │
-│   │ • CSV/TXT │    │   Morlet CWT  │    │   (spatial)   │    │ • Scalograms│  │
-│   │ • JSON    │    │ • 22ch × 50f  │    │ • Transformer │    │ • Reports   │  │
-│   │ • Demo    │    │   × 512t      │    │   (temporal)  │    │ • Confidence│  │
-│   │           │    │ • Scalogram   │    │ • 4-class     │    │   Scores    │  │
-│   │ Notch 60Hz│    │   rendering   │    │   softmax     │    │ • Auth      │  │
-│   │ BP 0.5-50 │    │               │    │               │    │             │  │
-│   │ Z-Score   │    │               │    │               │    │             │  │
-│   └──────────┘    └──────────────┘    └──────────────┘    └─────────────┘  │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
 
-### Data Flow
+---
 
-```
-                    ┌─────────────────────────────────┐
-                    │      Clinician / Researcher      │
-                    └────────────┬──────────────────────┘
-                                 │ Login (Practice ID + Key)
-                                 ▼
-                    ┌─────────────────────────────────┐
-                    │     POST /api/auth               │
-                    │     → Session Token (8hr)        │
-                    └────────────┬──────────────────────┘
-                                 │
-              ┌──────────────────┼──────────────────────┐
-              │                  │                      │
-              ▼                  ▼                      ▼
-     ┌────────────────┐ ┌────────────────┐  ┌───────────────────┐
-     │  Demo Signal   │ │  File Upload   │  │   JSON API Call   │
-     │  (4 types)     │ │  (.edf/.csv)   │  │   (signal_data)   │
-     └───────┬────────┘ └───────┬────────┘  └────────┬──────────┘
-              │                  │                     │
-              └──────────────────┼─────────────────────┘
-                                 │
-                                 ▼
-              ┌──────────────────────────────────────────┐
-              │         POST /api/predict                 │
-              │                                          │
-              │  Stage 1: Notch → Bandpass → Z-Score     │
-              │  Stage 2: CWT Scalogram (22×50×512)      │
-              │  Stage 3: CNN-Transformer → Softmax      │
-              │  Stage 4: Generate Report + Scalograms   │
-              │                                          │
-              └──────────────────┬───────────────────────┘
-                                 │
-                                 ▼
-              ┌──────────────────────────────────────────┐
-              │            JSON Response                  │
-              │  • prediction: "Seizure (Ictal)"         │
-              │  • confidences: {Normal: 0.01, ...}      │
-              │  • scalogram: base64 PNG (ch FP1-F7)     │
-              │  • scalogram_2: base64 PNG (ch C3-P3)    │
-              │  • medical_notes: "NEUROSCAN REPORT..."  │
-              │  • elapsed_ms: 142                       │
-              └──────────────────────────────────────────┘
+## 🔄 Data Flow
+
+```mermaid
+sequenceDiagram
+    actor C as 👨‍⚕️ Clinician
+    participant D as 🖥️ Dashboard
+    participant A as 🐍 Flask API
+    participant M as 🤖 CNN-Transformer
+
+    C->>D: Login (Practice ID + Key)
+    D->>A: POST /api/auth
+    A-->>D: Session Token (8 hr)
+
+    C->>D: Click "Seizure" demo button
+    D->>A: GET /api/demo-signal/seizure
+    A-->>D: Synthetic 22ch × 512 EEG signal
+
+    D->>A: POST /api/predict
+    Note over A: Stage 1 — Notch · Bandpass · Epoch · Z-Score
+    Note over A: Stage 2 — CWT → (22, 50, 512) scalogram
+    A->>M: Forward pass
+    Note over M: CNN → Transformer → Softmax
+    M-->>A: [0.01, 0.01, 0.97, 0.01]
+    Note over A: Stage 4 — Generate clinical report
+
+    A-->>D: prediction + confidences + scalograms + notes
+    D-->>C: Dashboard updates in real time
 ```
 
 ---
@@ -125,30 +129,17 @@ NeuroScan is an end-to-end clinical-grade EEG analysis system that classifies br
 
 ### Stage 1 — Data Ingestion & Signal Preprocessing
 
-Raw EEG signals undergo a multi-step cleaning pipeline before reaching the model:
+```mermaid
+flowchart LR
+    RAW["Raw EEG\n22ch × N samples\n(µV)"]
+    N["Notch Filter\n60 Hz IIR\nRemoves power-line noise"]
+    BP["Bandpass Filter\n0.5–50 Hz Butterworth 4th order\nRetains brain frequencies"]
+    EP["Epoch Extraction\n2s sliding window · 512 samples\n50% overlap"]
+    AR["Artifact Rejection\nRejects epochs > 300 µV\n(muscle/electrode pop)"]
+    ZS["Z-Score Normalization\nMean=0 · Std=1\nper channel"]
+    OUT["Clean Epoch\n22 × 512"]
 
-```
-Raw EEG Signal (22 channels × N samples)
-        │
-        ▼
-┌──────────────────────────┐
-│  IIR Notch Filter (60Hz) │  ← Removes power-line interference
-└──────────┬───────────────┘
-           ▼
-┌──────────────────────────────────┐
-│  Butterworth Bandpass (0.5–50Hz) │  ← Retains brain-relevant frequencies only
-└──────────┬───────────────────────┘
-           ▼
-┌──────────────────────────────────┐
-│  Epoch Extraction (2s windows)   │  ← 512 samples @ 256Hz, 50% overlap
-│  + Artifact Rejection (>300µV)   │  ← Discards noisy/saturated segments
-└──────────┬───────────────────────┘
-           ▼
-┌──────────────────────────────────┐
-│  Z-Score Normalization           │  ← Mean=0, Std=1 per channel
-└──────────┬───────────────────────┘
-           ▼
-   Clean Signal: (22 × 512)
+    RAW --> N --> BP --> EP --> AR --> ZS --> OUT
 ```
 
 **Supported Input Formats:**
@@ -156,130 +147,84 @@ Raw EEG Signal (22 channels × N samples)
 | Format | Parser | Use Case |
 |---|---|---|
 | `.edf` | MNE-Python | Medical EEG files (European Data Format) |
-| `.csv` / `.txt` | Built-in CSV parser | Exported recordings, research data |
-| JSON | Direct API input | Real-time streaming, integrations |
-| Demo | Synthetic generator | Testing & demonstration |
+| `.csv` / `.txt` | Built-in CSV reader | Exported recordings, research data |
+| JSON body | Direct API input | Real-time streaming, integrations |
+| Demo button | Synthetic generator | Testing & demonstration |
 
 ---
 
-### Stage 2 — CWT Scalogram Generation (Feature Engineering)
+### Stage 2 — CWT Scalogram Generation
 
-The 1D time-domain EEG signal is transformed into a 2D frequency-time representation using the **Continuous Wavelet Transform** with a **Complex Morlet wavelet** (`cmor1.5-1.0`):
+```mermaid
+flowchart LR
+    SIG["1D Signal\nper channel\n512 samples"]
+    CWT["Complex Morlet CWT\ncmor1.5-1.0\n1–50 Hz · 50 bins"]
+    SCALO["2D Scalogram\n50 freq × 512 time\nper channel"]
+    TENSOR["Final Tensor\n22 × 50 × 512\nall channels"]
+    PNG["PNG Heatmaps\nbase64 encoded\nfor dashboard"]
 
-```
-Input:  1D signal per channel ──── (512 time samples)
-                │
-                ▼
-        ┌───────────────────────┐
-        │  Complex Morlet CWT   │
-        │  Frequencies: 1–50 Hz │
-        │  50 logarithmic bins  │
-        └───────────┬───────────┘
-                    ▼
-Output: 2D scalogram per channel ── (50 freq bins × 512 time steps)
-
-All 22 channels combined: (22 × 50 × 512) tensor
+    SIG --> CWT --> SCALO
+    SCALO -->|"×22 channels"| TENSOR
+    TENSOR --> PNG
 ```
 
-**Why CWT instead of raw signal?**
-> Raw EEG is a noisy 1D voltage trace. The CWT decomposes it into a frequency-time heatmap where seizure-specific patterns (rhythmic 3–8 Hz bursts, spike-wave complexes) become **visually distinct** — making them far easier for a CNN to detect.
+> **Why CWT?** Raw EEG is a noisy 1D voltage trace. The CWT decomposes it into a 2D frequency-time heatmap where seizure-specific patterns — rhythmic 3–8 Hz bursts and spike-wave complexes — become **visually distinct** and far easier for the CNN to detect.
 
 ---
 
 ### Stage 3 — CNN-Transformer Hybrid Model
 
-The core of NeuroScan is a **hybrid architecture** combining 2D CNNs for spatial feature extraction with Transformer encoders for temporal attention:
+```mermaid
+flowchart TD
+    IN["Input Tensor\nBatch × 22 × 50 × 512\n22ch · 50 freq bins · 512 time"]
 
+    subgraph CNN["🖼️  2D CNN — Spatial Feature Extraction"]
+        C1["Conv2D 22→32 · BatchNorm · ReLU\nMaxPool 2×2\n→ Batch × 32 × 25 × 256"]
+        C2["Conv2D 32→64 · BatchNorm · ReLU\nMaxPool 2×2\n→ Batch × 64 × 12 × 128"]
+    end
+
+    BRIDGE["🔀 Reshape Bridge\nPermute + Flatten\n→ Batch × 128 timesteps × 768 features"]
+
+    subgraph TF["⚡  Transformer Encoder — Temporal Attention"]
+        T1["Self-Attention Layer 1\n8 heads · d_model=768"]
+        T2["Self-Attention Layer 2\n8 heads · d_ff=2048"]
+    end
+
+    POOL["📉 Global Average Pooling\nMean over 128 timesteps\n→ Batch × 768"]
+
+    subgraph CLS["🎯  Classifier Head"]
+        L1["Linear 768→256 · ReLU · Dropout 50%"]
+        L2["Linear 256→4 · Softmax"]
+    end
+
+    OUT["Output\n4 Class Probabilities\nNormal · Preictal · Seizure · Postictal"]
+
+    IN --> C1 --> C2 --> BRIDGE --> T1 --> T2 --> POOL --> L1 --> L2 --> OUT
 ```
-Input: (Batch, 22, 50, 512) — 22 channels × 50 freq bins × 512 time steps
-                │
-                ▼
-┌─────────────────────────────────────────────────┐
-│              2D CNN FEATURE EXTRACTOR            │
-│                                                  │
-│  Block 1: Conv2D(22→32) + BatchNorm + ReLU      │
-│           + MaxPool2D(2×2)                       │
-│           → (Batch, 32, 25, 256)                 │
-│                                                  │
-│  Block 2: Conv2D(32→64) + BatchNorm + ReLU      │
-│           + MaxPool2D(2×2)                       │
-│           → (Batch, 64, 12, 128)                 │
-└──────────────────┬──────────────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────────────┐
-│              RESHAPE BRIDGE                      │
-│                                                  │
-│  Permute: (Batch, 64, 12, 128)                  │
-│        → (Batch, 128, 64, 12)                   │
-│  Flatten: → (Batch, 128, 768)                   │
-│                                                  │
-│  128 time steps, each with 768-dim features     │
-└──────────────────┬──────────────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────────────┐
-│          TRANSFORMER ENCODER                     │
-│                                                  │
-│  2 Encoder Layers                               │
-│  8 Self-Attention Heads                         │
-│  d_model = 768, d_ff = 2048                     │
-│  → (Batch, 128, 768)                            │
-│                                                  │
-│  Learns temporal dependencies across time       │
-└──────────────────┬──────────────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────────────┐
-│       GLOBAL AVERAGE POOLING                     │
-│  Mean over 128 time steps → (Batch, 768)        │
-└──────────────────┬──────────────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────────────┐
-│          CLASSIFIER HEAD                         │
-│                                                  │
-│  Linear(768 → 256) + ReLU + Dropout(0.5)       │
-│  Linear(256 → 4)                                │
-│  → Softmax → 4 class probabilities              │
-│                                                  │
-│  [Normal | Preictal | Seizure | Postictal]      │
-└─────────────────────────────────────────────────┘
-```
-
-**Why this hybrid approach?**
-
-| Component | Strength | Captures |
-|---|---|---|
-| **2D CNN** | Spatial pattern recognition | Spike shapes, frequency band activations, scalogram textures |
-| **Transformer** | Long-range temporal attention | How seizure patterns evolve and propagate over time |
-| **Combined** | Best of both worlds | Spatial features + temporal context = robust classification |
 
 **Training Details:**
 
 | Parameter | Value |
 |---|---|
 | Dataset | CHB-MIT Scalp EEG Database (24 pediatric patients) |
-| Optimizer | AdamW (lr=1e-4, weight_decay=1e-2) |
-| Scheduler | ReduceLROnPlateau (factor=0.5, patience=3) |
+| Optimizer | AdamW · lr=1e-4 · weight_decay=1e-2 |
+| Scheduler | ReduceLROnPlateau · factor=0.5 · patience=3 |
 | Loss | Cross-Entropy with class weights `[0.1, 0.4, 0.9, 0.4]` |
-| Regularization | Dropout 50%, BatchNorm, weight decay |
-| Precision | Mixed (FP16 on GPU via AMP) |
+| Regularization | Dropout 50% · BatchNorm · weight decay |
+| Precision | Mixed FP16 (AMP on GPU) |
 
-> **Class weighting** is critical — in real EEG data, seizures represent <1% of recording time. Without weighting, the model would learn to always predict "Normal" and achieve 99% accuracy while being clinically useless.
+> **Why class weighting?** In real EEG data, seizures are <1% of recording time. Without weighting the model just predicts "Normal" always and still gets 99% accuracy — being clinically useless. Heavier weight on seizure class forces the model to focus on rare events.
 
 ---
 
 ### Stage 4 — Clinical Dashboard & Output
 
-The Flask API returns a comprehensive JSON response, rendered by the clinical dashboard:
-
 | Output | Description |
 |---|---|
-| **Classification** | Top predicted class with confidence percentage |
-| **Confidence Scores** | Probability distribution across all 4 classes |
-| **CWT Scalograms** | Base64-encoded heatmap images from channels FP1-F7 and C3-P3 |
-| **Signal Preview** | 512-point waveform for visual inspection |
+| **Classification** | Top predicted class with confidence % |
+| **Confidence Scores** | Full probability distribution across all 4 classes |
+| **CWT Scalograms** | Heatmap images from channels FP1-F7 and C3-P3 |
+| **Signal Preview** | 512-point raw waveform for visual inspection |
 | **Medical Report** | Auto-generated clinical notes with recommended actions |
 | **Inference Time** | End-to-end pipeline latency in milliseconds |
 
@@ -288,7 +233,6 @@ The Flask API returns a comprehensive JSON response, rendered by the clinical da
 ## 🚀 Quick Start
 
 ### Prerequisites
-
 - Python 3.10+
 - pip
 
@@ -330,17 +274,13 @@ You should see:
 
 ### 4. Open the Dashboard
 
-Navigate to **http://localhost:5000** in your browser.
-
-Login with demo credentials:
+Navigate to **http://localhost:5000** and login:
 - **Practice ID:** `DEMO_CLINIC`
 - **Access Key:** `NS2026`
 
 ---
 
 ## 🎮 Demo
-
-Once logged in, use the **sidebar control panel** to test the system:
 
 | Button | Simulates | Expected Confidence |
 |---|---|---|
@@ -349,7 +289,7 @@ Once logged in, use the **sidebar control panel** to test the system:
 | 🔴 Seizure | Active ictal event with spike-wave bursts | ~97% Seizure |
 | 🟠 Postictal | Post-seizure delta slowing | ~93% Postictal |
 
-**File Upload:** Drag-and-drop a `.edf`, `.csv`, or `.txt` file into the upload zone for real inference against the trained model.
+**File Upload:** Drag-and-drop a `.edf`, `.csv`, or `.txt` file for real inference against the trained model.
 
 ---
 
@@ -365,21 +305,19 @@ EEG-Signals/
 ├── 📖 README.md                      # This file
 ├── 📋 SETUP.md                       # Quick setup guide
 │
-├── code/
-│   ├── 🐍 app.py                     # Flask API — all 4 pipeline stages
-│   ├── 🤖 model.py                   # EEG_2D_Hybrid_Model definition
-│   ├── 🌊 preprocess_features.py     # CWT feature extraction
-│   ├── 🔧 preprocess_seizure_only.py # Targeted seizure data preprocessor
-│   ├── 🔍 find_hardest_seizure.py    # Edge case seizure locator
-│   ├── 🧪 test_manual_seizure.py     # Model accuracy verification
-│   ├── 📈 train_full.py              # Full training pipeline
-│   ├── ⚡ train_optimized.py          # Memory-optimized training
-│   ├── 🔄 run_pipeline.py            # End-to-end pipeline runner
-│   ├── 📊 resource_monitor.py        # Hardware safety guard
-│   ├── ⚙️ training_config.yaml       # Resource threshold config
-│   └── 🌐 render.yaml                # Render.com deployment config
-│
-└── .gitignore
+└── code/
+    ├── 🐍 app.py                     # Flask API — all 4 pipeline stages
+    ├── 🤖 model.py                   # EEG_2D_Hybrid_Model definition
+    ├── 🌊 preprocess_features.py     # CWT feature extraction (train + inference)
+    ├── 🔧 preprocess_seizure_only.py # Targeted seizure data preprocessor
+    ├── 🔍 find_hardest_seizure.py    # Edge case seizure locator
+    ├── 🧪 test_manual_seizure.py     # Model accuracy verification
+    ├── 📈 train_full.py              # Full training pipeline
+    ├── ⚡ train_optimized.py          # Memory-optimized training
+    ├── 🔄 run_pipeline.py            # End-to-end pipeline runner
+    ├── 📊 resource_monitor.py        # Hardware safety guard
+    ├── ⚙️ training_config.yaml       # Resource threshold config
+    └── 🌐 render.yaml                # Render.com deployment config
 ```
 
 ---
@@ -387,57 +325,37 @@ EEG-Signals/
 ## 🔌 API Reference
 
 ### Authentication
-
 ```http
 POST /api/auth
 Content-Type: application/json
 
-{
-  "practice_id": "DEMO_CLINIC",
-  "key": "NS2026"
-}
+{ "practice_id": "DEMO_CLINIC", "key": "NS2026" }
 ```
 
-**Response:**
-```json
-{
-  "token": "a1b2c3...",
-  "clinician": "Demo Clinic",
-  "practice_id": "DEMO_CLINIC"
-}
-```
-
-### Predict (JSON)
-
+### Predict — JSON
 ```http
 POST /api/predict
 Content-Type: application/json
-X-Auth-Token: <session_token>
+X-Auth-Token: <token>
 
-{
-  "signal_data": [[...], [...], ...],
-  "patient_id": "patient_001"
-}
+{ "signal_data": [[...22 channels...]], "patient_id": "patient_001" }
 ```
 
-### Predict (File Upload)
-
+### Predict — File Upload
 ```http
 POST /api/predict
 Content-Type: multipart/form-data
-X-Auth-Token: <session_token>
+X-Auth-Token: <token>
 
-file: <eeg_recording.edf>
+file: eeg_recording.edf
 ```
 
-### Demo Signals
-
+### Demo Signal
 ```http
 GET /api/demo-signal/{normal|preictal|seizure|postictal}
 ```
 
 ### Health Check
-
 ```http
 GET /api/health
 ```
@@ -446,51 +364,48 @@ GET /api/health
 
 ## 🧬 Dataset
 
-This project uses the **CHB-MIT Scalp EEG Database** from PhysioNet:
+**CHB-MIT Scalp EEG Database** (PhysioNet):
 
-- **24 pediatric patients** with intractable epilepsy
-- **22-channel** EEG recordings (international 10-20 system)
-- **256 Hz** sampling rate
-- Annotated seizure onset/offset times
-- ~983 hours of continuous EEG with 198 annotated seizures
+- 24 pediatric patients with intractable epilepsy
+- 22-channel EEG (international 10-20 system)
+- 256 Hz sampling rate · ~983 hours · 198 annotated seizures
 
-**EEG Channel Montage:**
 ```
 FP1-F7  F7-T7  T7-P7  P7-O1  FP1-F3  F3-C3  C3-P3  P3-O1
 FP2-F4  F4-C4  C4-P4  P4-O2  FP2-F8  F8-T8  T8-P8  P8-O2
 FZ-CZ   CZ-PZ  P7-T7  T7-FT9 FT9-FT10 FT10-T8
 ```
 
-> **Reference:** Shoeb, A. H. (2009). *Application of Machine Learning to Epileptic Seizure Onset Detection and Treatment.* PhD Thesis, MIT.
+> Shoeb, A. H. (2009). *Application of Machine Learning to Epileptic Seizure Onset Detection and Treatment.* PhD Thesis, MIT.
 
 ---
 
 ## ⚙️ Tech Stack
 
-| Component | Technology | Purpose |
+| Layer | Technology | Role |
 |---|---|---|
 | Backend | Flask 3.0+ | REST API server |
-| Frontend | HTML/CSS/JS | Clinical dashboard UI |
+| Frontend | HTML / CSS / JS | Clinical dashboard UI |
 | Deep Learning | PyTorch 2.2+ | CNN-Transformer model |
-| Signal Processing | SciPy | IIR/Butterworth filters |
+| Signal Processing | SciPy | IIR / Butterworth filters |
 | Wavelet Transform | PyWavelets | CWT scalogram generation |
 | EEG Parsing | MNE-Python | Medical EDF file reader |
-| Visualization | Matplotlib | Scalogram rendering |
+| Visualization | Matplotlib | Scalogram PNG rendering |
 | Deployment | Gunicorn + Render | Production WSGI server |
 
 ---
 
 ## 📚 References
 
-1. Abiyev, R. et al. (2020). *"Identification of Epileptic EEG Signals Using Convolutional Neural Networks."* Applied Sciences, 10(12), 4089.
+1. Abiyev, R. et al. (2020). *Identification of Epileptic EEG Signals Using CNN.* Applied Sciences, 10(12), 4089.
 2. Shoeb, A. H. (2009). *Application of Machine Learning to Epileptic Seizure Onset Detection and Treatment.* PhD Thesis, MIT.
-3. Goldberger, A. et al. (2000). *"PhysioBank, PhysioToolkit, and PhysioNet."* Circulation, 101(23), e215–e220.
+3. Goldberger, A. et al. (2000). *PhysioBank, PhysioToolkit, and PhysioNet.* Circulation, 101(23), e215–e220.
 
 ---
 
 ## 📜 License
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
