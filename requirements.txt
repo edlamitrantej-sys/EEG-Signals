@@ -20,3 +20,6 @@ psutil>=5.9.0
 
 # Production WSGI (Render deployment)
 gunicorn>=21.2.0
+fastapi
+restapi
+unvicorn
